@@ -65,6 +65,7 @@ namespace ValheimPlus.Configurations
                     }
 
                     Configuration.Current = LoadFromIni(ConfigIniPath);
+                    Configuration.Local = Configuration.Current;
                 }
                 else
                 {
