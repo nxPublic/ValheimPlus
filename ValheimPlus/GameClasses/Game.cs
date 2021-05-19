@@ -20,6 +20,11 @@ namespace ValheimPlus.GameClasses
             ZRoutedRpc.instance.Register("VPlusMapSync", new Action<long, ZPackage>(VPlusMapSync.RPC_VPlusMapSync)); //Map Sync
             ZRoutedRpc.instance.Register("VPlusMapPinSync", new Action<long, ZPackage>(VPlusMapPinSync.RPC_VPlusMapPinSync)); //Map Pin Sync
             ZRoutedRpc.instance.Register("VPlusAck", new Action<long>(VPlusAck.RPC_VPlusAck)); //Ack
+
+            if (RecipeManager.instance != null)
+            {
+                RecipeManager.instance.OnGameStart();
+            }
         }
     }
 

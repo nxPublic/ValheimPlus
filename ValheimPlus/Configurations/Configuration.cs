@@ -47,6 +47,7 @@ namespace ValheimPlus.Configurations
         public FirstPersonConfiguration FirstPerson { get; internal set; }
         public GridAlignmentConfiguration GridAlignment { get; set; }
         public CraftFromChestConfiguration CraftFromChest { get; set; }
+        public RecipeManagerConfiguration RecipeManager { get; set; }
         public ValheimPlusConfiguration ValheimPlus { get; set; }
         public PlayerProjectileConfiguration PlayerProjectile { get; set; }
         public MonsterProjectileConfiguration MonsterProjectile { get; set; }

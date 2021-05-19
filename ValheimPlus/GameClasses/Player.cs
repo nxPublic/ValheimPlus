@@ -1102,4 +1102,18 @@ namespace ValheimPlus.GameClasses
             }
         }
     }
+
+    /// Sync RecipeManager piece configuration with set table
+    /// </summary>
+    [HarmonyPatch(typeof(Player), "SetPlaceMode")]
+    public static class Player_SetPlaceMode_Patch
+    {
+        private static void Prefix(Player __instance, PieceTable buildPieces)
+        {            
+            if (buildPieces != null && RecipeManager.instance != null)
+            {
+                RecipeManager.instance.SyncPieceTable(buildPieces);
+            }
+        }
+    }
 }
