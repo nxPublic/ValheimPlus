@@ -1,7 +1,6 @@
 ﻿using HarmonyLib;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -9,7 +8,6 @@ using UnityEngine.UI;
 using ValheimPlus.Configurations;
 using ValheimPlus.RPC;
 using ValheimPlus.Utility;
-using Random = UnityEngine.Random;
 
 // ToDo add packet system to convey map markers
 namespace ValheimPlus.GameClasses
@@ -21,8 +19,9 @@ namespace ValheimPlus.GameClasses
     public class HookExplore
     {
         [HarmonyReversePatch]
-        [HarmonyPatch(typeof(Minimap), "Explore", new Type[] { typeof(Vector3), typeof(float) })]
-        public static void call_Explore(object instance, Vector3 p, float radius) => throw new NotImplementedException();
+        [HarmonyPatch(typeof(Minimap), "Explore", new Type[] {typeof(Vector3), typeof(float)})]
+        public static void call_Explore(object instance, Vector3 p, float radius) =>
+            throw new NotImplementedException();
     }
 
     /// <summary>
@@ -31,7 +30,8 @@ namespace ValheimPlus.GameClasses
     [HarmonyPatch(typeof(Minimap), "UpdateExplore")]
     public static class ChangeMapBehavior
     {
-        private static void Prefix(ref float dt, ref Player player, ref Minimap __instance, ref float ___m_exploreTimer, ref float ___m_exploreInterval)
+        private static void Prefix(ref float dt, ref Player player, ref Minimap __instance, ref float ___m_exploreTimer,
+            ref float ___m_exploreInterval)
         {
             if (Configuration.Current.Map.exploreRadius > 10000) Configuration.Current.Map.exploreRadius = 10000;
 
@@ -47,7 +47,8 @@ namespace ValheimPlus.GameClasses
                     {
                         foreach (ZNet.PlayerInfo m_Player in ZNet.instance.m_players)
                         {
-                            HookExplore.call_Explore(__instance, m_Player.m_position, Configuration.Current.Map.exploreRadius);
+                            HookExplore.call_Explore(__instance, m_Player.m_position,
+                                Configuration.Current.Map.exploreRadius);
                         }
                     }
                 }
@@ -93,14 +94,56 @@ namespace ValheimPlus.GameClasses
 
             private static void Postfix(ref Minimap __instance, ref Minimap.PinData __result)
             {
-                if (Configuration.Current.Map.IsEnabled && Configuration.Current.Map.shareAllPins)
-                    if (shareablePins.Contains(__result.m_type))
+                if (Configuration.Current.Map.IsEnabled)
+                {
+                    ZLog.LogWarning(
+                        $"--- Configuration.Current.Map.syncPins: {Configuration.Current.Map.globalPinSync = true}");
+
+                    if (Configuration.Current.Map.shareAllPins && shareablePins.Contains(__result.m_type))
                     {
                         if (__instance.m_mode != Minimap.MapMode.Large)
                             VPlusMapPinSync.SendMapPinToServer(__result, true);
                         else
                             VPlusMapPinSync.SendMapPinToServer(__result);
                     }
+
+                    if (
+                        Configuration.Current.Map.shareablePins
+                        && Configuration.Current.Map.globalPinSync
+                    )
+                    {
+                        HandleMapSyncPinsOption(__instance);
+                    }
+                }
+            }
+
+            public static void HandleMapSyncPinsOption(Minimap minimap)
+            {
+                if (ZNet.instance.IsServer()) return;
+
+                VPlusMapGlobalPinSync.Initialize();
+            }
+        }
+
+
+        [HarmonyPatch(
+            typeof(Minimap), 
+            nameof(Minimap.RemovePin), 
+            new[] {typeof(Vector3), typeof(float)}
+        )]
+        public static class Minimap_RemovePin_Patch
+        {
+            private static void Postfix(Vector3 pos, float radius)
+            {
+                if (
+                    Configuration.Current.Map.IsEnabled
+                    && Configuration.Current.Map.shareablePins
+                    && Configuration.Current.Map.globalPinSync
+                    )
+                {
+                    ZLog.Log("globalPinSync: Pin remove request");
+                    VPlusMapGlobalPinSync.SendPinRemoveRequest(pos, radius);
+                }
             }
         }
 
@@ -109,7 +152,9 @@ namespace ValheimPlus.GameClasses
         {
             public static void AddPin(ref Minimap __instance)
             {
-                Minimap.PinType pintype = iconSelected.value == 4 ? Minimap.PinType.Icon4 : (Minimap.PinType)iconSelected.value;
+                Minimap.PinType pintype = iconSelected.value == 4
+                    ? Minimap.PinType.Icon4
+                    : (Minimap.PinType) iconSelected.value;
                 Minimap.PinData addedPin = __instance.AddPin(pinPos, pintype, pinName.text, true, false);
                 if (Configuration.Current.Map.shareablePins && sharePin.isOn && !Configuration.Current.Map.shareAllPins)
                     VPlusMapPinSync.SendMapPinToServer(addedPin);
@@ -121,49 +166,73 @@ namespace ValheimPlus.GameClasses
             {
                 if (Configuration.Current.Map.IsEnabled)
                 {
-                    Minimap_AddPin_Patch.shareablePins = new List<Minimap.PinType>() { 
-                        Minimap.PinType.Icon0, Minimap.PinType.Icon1, Minimap.PinType.Icon2, 
-                        Minimap.PinType.Icon3, Minimap.PinType.Icon4 };
-                    GameObject iconPanelOld = GameObjectAssistant.GetChildComponentByName<Transform>("IconPanel", __instance.m_largeRoot).gameObject;
-                    for (int i = 0; i < 5; i++)
-                    {
-                        GameObjectAssistant.GetChildComponentByName<Transform>("Icon" + i.ToString(), iconPanelOld).gameObject.SetActive(false);
-                    }
-                    GameObjectAssistant.GetChildComponentByName<Transform>("Bkg", iconPanelOld).gameObject.SetActive(false);
-                    iconPanelOld.SetActive(false);
-                    __instance.m_nameInput.gameObject.SetActive(false);
-                    if (mapPinBundle == null)
-                    {
-                        mapPinBundle = AssetBundle.LoadFromStream(EmbeddedAsset.LoadEmbeddedAsset("Assets.Bundles.map-pin-ui"));
-                    }
-                    GameObject pinEditorPanelParent = mapPinBundle.LoadAsset<GameObject>("MapPinEditor");
-                    pinEditorPanel = GameObject.Instantiate(pinEditorPanelParent.transform.GetChild(0).gameObject);
-                    pinEditorPanel.transform.SetParent(__instance.m_largeRoot.transform, false);
-                    pinEditorPanel.SetActive(false);
-
-                    pinName = pinEditorPanel.GetComponentInChildren<InputField>();
-                    if (pinName != null)
-                        Debug.Log("Pin Name loaded properly");
-                    Minimap theInstance = __instance;
-                    GameObjectAssistant.GetChildComponentByName<Transform>("OK", pinEditorPanel).gameObject.GetComponent<Button>().onClick.AddListener(delegate { AddPin(ref theInstance); });
-                    GameObjectAssistant.GetChildComponentByName<Transform>("Cancel", pinEditorPanel).gameObject.GetComponent<Button>().onClick.AddListener(delegate { Minimap.instance.m_wasFocused = false; pinEditorPanel.SetActive(false); });
-                    iconSelected = pinEditorPanel.GetComponentInChildren<Dropdown>();
-                    iconSelected.options.Clear();
-                    int ind = 0;
-                    List<string> list = new List<string> { "Fire", "Home", "Hammer", "Circle", "Rune" };
-                    foreach (string option in list)
-                    {
-                        iconSelected.options.Add(new Dropdown.OptionData(option, Minimap.instance.m_icons[ind].m_icon));
-                        ind++;
-                    }
-                    if (iconSelected != null)
-                        Debug.Log("Dropdown loaded properly");
-                    sharePin = pinEditorPanel.GetComponentInChildren<Toggle>();
-                    if (sharePin != null)
-                        Debug.Log("Share pin loaded properly");
-                    if (!Configuration.Current.Map.shareablePins || Configuration.Current.Map.shareAllPins)
-                        sharePin.gameObject.SetActive(false);
+                    SetupMap(__instance);
                 }
+            }
+
+            private static void SetupMap(Minimap __instance)
+            {
+                ZLog.LogWarning("--- VPlus SetupMap");
+
+                Minimap_AddPin_Patch.shareablePins = new List<Minimap.PinType>()
+                {
+                    Minimap.PinType.Icon0, Minimap.PinType.Icon1, Minimap.PinType.Icon2,
+                    Minimap.PinType.Icon3, Minimap.PinType.Icon4
+                };
+                GameObject iconPanelOld = GameObjectAssistant
+                    .GetChildComponentByName<Transform>("IconPanel", __instance.m_largeRoot).gameObject;
+                for (int i = 0; i < 5; i++)
+                {
+                    GameObjectAssistant.GetChildComponentByName<Transform>("Icon" + i.ToString(), iconPanelOld)
+                        .gameObject
+                        .SetActive(false);
+                }
+
+                GameObjectAssistant.GetChildComponentByName<Transform>("Bkg", iconPanelOld).gameObject.SetActive(false);
+                iconPanelOld.SetActive(false);
+                __instance.m_nameInput.gameObject.SetActive(false);
+                if (mapPinBundle == null)
+                {
+                    mapPinBundle =
+                        AssetBundle.LoadFromStream(EmbeddedAsset.LoadEmbeddedAsset("Assets.Bundles.map-pin-ui"));
+                }
+
+                GameObject pinEditorPanelParent = mapPinBundle.LoadAsset<GameObject>("MapPinEditor");
+                pinEditorPanel = GameObject.Instantiate(pinEditorPanelParent.transform.GetChild(0).gameObject);
+                pinEditorPanel.transform.SetParent(__instance.m_largeRoot.transform, false);
+                pinEditorPanel.SetActive(false);
+
+                pinName = pinEditorPanel.GetComponentInChildren<InputField>();
+                if (pinName != null)
+                    Debug.Log("Pin Name loaded properly");
+                Minimap theInstance = __instance;
+                GameObjectAssistant.GetChildComponentByName<Transform>("OK", pinEditorPanel).gameObject
+                    .GetComponent<Button>()
+                    .onClick.AddListener(delegate { AddPin(ref theInstance); });
+                GameObjectAssistant.GetChildComponentByName<Transform>("Cancel", pinEditorPanel).gameObject
+                    .GetComponent<Button>()
+                    .onClick.AddListener(delegate
+                    {
+                        Minimap.instance.m_wasFocused = false;
+                        pinEditorPanel.SetActive(false);
+                    });
+                iconSelected = pinEditorPanel.GetComponentInChildren<Dropdown>();
+                iconSelected.options.Clear();
+                int ind = 0;
+                List<string> list = new List<string> {"Fire", "Home", "Hammer", "Circle", "Rune"};
+                foreach (string option in list)
+                {
+                    iconSelected.options.Add(new Dropdown.OptionData(option, Minimap.instance.m_icons[ind].m_icon));
+                    ind++;
+                }
+
+                if (iconSelected != null)
+                    Debug.Log("Dropdown loaded properly");
+                sharePin = pinEditorPanel.GetComponentInChildren<Toggle>();
+                if (sharePin != null)
+                    Debug.Log("Share pin loaded properly");
+                if (!Configuration.Current.Map.shareablePins || Configuration.Current.Map.shareAllPins)
+                    sharePin.gameObject.SetActive(false);
             }
         }
 
@@ -174,23 +243,32 @@ namespace ValheimPlus.GameClasses
             {
                 if (Configuration.Current.Map.IsEnabled)
                 {
-                    if(pinEditorPanel == null)
+                    if (pinEditorPanel == null)
                     {
-                        Minimap_AddPin_Patch.shareablePins = new List<Minimap.PinType>() {
-                        Minimap.PinType.Icon0, Minimap.PinType.Icon1, Minimap.PinType.Icon2,
-                        Minimap.PinType.Icon3, Minimap.PinType.Icon4 };
-                        GameObject iconPanelOld = GameObjectAssistant.GetChildComponentByName<Transform>("IconPanel", __instance.m_largeRoot).gameObject;
+                        Minimap_AddPin_Patch.shareablePins = new List<Minimap.PinType>()
+                        {
+                            Minimap.PinType.Icon0, Minimap.PinType.Icon1, Minimap.PinType.Icon2,
+                            Minimap.PinType.Icon3, Minimap.PinType.Icon4
+                        };
+                        GameObject iconPanelOld = GameObjectAssistant
+                            .GetChildComponentByName<Transform>("IconPanel", __instance.m_largeRoot).gameObject;
                         for (int i = 0; i < 5; i++)
                         {
-                            GameObjectAssistant.GetChildComponentByName<Transform>("Icon" + i.ToString(), iconPanelOld).gameObject.SetActive(false);
+                            GameObjectAssistant.GetChildComponentByName<Transform>("Icon" + i.ToString(), iconPanelOld)
+                                .gameObject.SetActive(false);
                         }
-                        GameObjectAssistant.GetChildComponentByName<Transform>("Bkg", iconPanelOld).gameObject.SetActive(false);
+
+                        GameObjectAssistant.GetChildComponentByName<Transform>("Bkg", iconPanelOld).gameObject
+                            .SetActive(false);
                         iconPanelOld.SetActive(false);
                         __instance.m_nameInput.gameObject.SetActive(false);
                         if (mapPinBundle == null)
                         {
-                            mapPinBundle = AssetBundle.LoadFromStream(EmbeddedAsset.LoadEmbeddedAsset("Assets.Bundles.map-pin-ui"));
+                            mapPinBundle =
+                                AssetBundle.LoadFromStream(
+                                    EmbeddedAsset.LoadEmbeddedAsset("Assets.Bundles.map-pin-ui"));
                         }
+
                         GameObject pinEditorPanelParent = mapPinBundle.LoadAsset<GameObject>("MapPinEditor");
                         pinEditorPanel = GameObject.Instantiate(pinEditorPanelParent.transform.GetChild(0).gameObject);
                         pinEditorPanel.transform.SetParent(__instance.m_largeRoot.transform, false);
@@ -200,17 +278,28 @@ namespace ValheimPlus.GameClasses
                         if (pinName != null)
                             Debug.Log("Pin Name loaded properly");
                         Minimap theInstance = __instance;
-                        GameObjectAssistant.GetChildComponentByName<Transform>("OK", pinEditorPanel).gameObject.GetComponent<Button>().onClick.AddListener(delegate { MapPinEditor_Patches_Awake.AddPin(ref theInstance); });
-                        GameObjectAssistant.GetChildComponentByName<Transform>("Cancel", pinEditorPanel).gameObject.GetComponent<Button>().onClick.AddListener(delegate { Minimap.instance.m_wasFocused = false; pinEditorPanel.SetActive(false); });
+                        GameObjectAssistant.GetChildComponentByName<Transform>("OK", pinEditorPanel).gameObject
+                            .GetComponent<Button>().onClick.AddListener(delegate
+                            {
+                                MapPinEditor_Patches_Awake.AddPin(ref theInstance);
+                            });
+                        GameObjectAssistant.GetChildComponentByName<Transform>("Cancel", pinEditorPanel).gameObject
+                            .GetComponent<Button>().onClick.AddListener(delegate
+                            {
+                                Minimap.instance.m_wasFocused = false;
+                                pinEditorPanel.SetActive(false);
+                            });
                         iconSelected = pinEditorPanel.GetComponentInChildren<Dropdown>();
                         iconSelected.options.Clear();
                         int ind = 0;
-                        List<string> list = new List<string> { "Fire", "Home", "Hammer", "Circle", "Rune" };
+                        List<string> list = new List<string> {"Fire", "Home", "Hammer", "Circle", "Rune"};
                         foreach (string option in list)
                         {
-                            iconSelected.options.Add(new Dropdown.OptionData(option, Minimap.instance.m_icons[ind].m_icon));
+                            iconSelected.options.Add(new Dropdown.OptionData(option,
+                                Minimap.instance.m_icons[ind].m_icon));
                             ind++;
                         }
+
                         if (iconSelected != null)
                             Debug.Log("Dropdown loaded properly");
                         sharePin = pinEditorPanel.GetComponentInChildren<Toggle>();
@@ -219,19 +308,23 @@ namespace ValheimPlus.GameClasses
                         if (!Configuration.Current.Map.shareablePins || Configuration.Current.Map.shareAllPins)
                             sharePin.gameObject.SetActive(false);
                     }
+
                     if (!pinEditorPanel.activeSelf)
                     {
                         pinEditorPanel.SetActive(true);
                     }
+
                     if (!pinName.isFocused)
                     {
                         EventSystem.current.SetSelectedGameObject(pinName.gameObject);
                     }
+
                     pinPos = __instance.ScreenToWorldPoint(Input.mousePosition);
                     __instance.m_wasFocused = true;
                     //iconPanel.transform.localPosition = pinPos;
                     return false;
                 }
+
                 return true;
             }
         }
@@ -246,6 +339,7 @@ namespace ValheimPlus.GameClasses
                     // Break out of this unnecessary thing
                     return false;
                 }
+
                 return true;
             }
         }
@@ -260,6 +354,7 @@ namespace ValheimPlus.GameClasses
                     __result = Minimap.m_instance.m_mode == Minimap.MapMode.Large && Minimap.m_instance.m_wasFocused;
                     return false;
                 }
+
                 return true;
             }
         }
@@ -275,9 +370,10 @@ namespace ValheimPlus.GameClasses
                     {
                         if (Input.GetKeyDown(KeyCode.Escape))
                         {
-                            Minimap.instance.m_wasFocused = false; 
+                            Minimap.instance.m_wasFocused = false;
                             pinEditorPanel.SetActive(false);
-                        } else if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                        }
+                        else if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                         {
                             MapPinEditor_Patches_Awake.AddPin(ref __instance);
                         }
@@ -351,6 +447,7 @@ namespace ValheimPlus.GameClasses
                         __instance.RemovePin(customPin);
                         customPins.Remove(zdo);
                     }
+
                     return true;
                 }
 
@@ -364,7 +461,7 @@ namespace ValheimPlus.GameClasses
 
                     customPin.m_doubleSize = true;
                     customPins.Add(zdo, customPin);
-                } 
+                }
                 else
                     customPin.m_pos = zdo.m_position;
 
@@ -375,7 +472,8 @@ namespace ValheimPlus.GameClasses
             {
                 timeCounter += dt;
 
-                if (timeCounter < updateInterval || !Configuration.Current.Map.IsEnabled || !Configuration.Current.Map.displayCartsAndBoats)
+                if (timeCounter < updateInterval || !Configuration.Current.Map.IsEnabled ||
+                    !Configuration.Current.Map.displayCartsAndBoats)
                     return;
 
                 timeCounter -= updateInterval;
